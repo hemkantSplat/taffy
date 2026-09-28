@@ -320,6 +320,10 @@ pub(crate) fn perform_oof_layout(
             known_dimensions = known_dimensions.maybe_apply_aspect_ratio(aspect_ratio).maybe_clamp(min_size, max_size);
         }
 
+        // Shrink-to-fit width is bounded by the containing block less the definite insets (CSS 2 10.3.7); the
+        // box subtracts its own margins from the available space, as every child does.
+        let available_width = f32_max(area_width - left.unwrap_or(0.0) - right.unwrap_or(0.0), 0.0);
+
         let final_size = match (known_dimensions.width, known_dimensions.height) {
             (Some(width), Some(height)) => Size { width, height },
             _ => {
@@ -328,7 +332,7 @@ pub(crate) fn perform_oof_layout(
                     known_dimensions,
                     area_size.map(Some),
                     Size {
-                        width: AvailableSpace::Definite(area_width.maybe_clamp(min_size.width, max_size.width)),
+                        width: AvailableSpace::Definite(available_width.maybe_clamp(min_size.width, max_size.width)),
                         height: AvailableSpace::Definite(area_height.maybe_clamp(min_size.height, max_size.height)),
                     },
                     SizingMode::ContentSize,
@@ -344,7 +348,7 @@ pub(crate) fn perform_oof_layout(
             final_size.map(Some),
             area_size.map(Some),
             Size {
-                width: AvailableSpace::Definite(area_width.maybe_clamp(min_size.width, max_size.width)),
+                width: AvailableSpace::Definite(available_width.maybe_clamp(min_size.width, max_size.width)),
                 height: AvailableSpace::Definite(area_height.maybe_clamp(min_size.height, max_size.height)),
             },
             SizingMode::ContentSize,
