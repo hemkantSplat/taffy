@@ -45,11 +45,8 @@ where
         }
         SizingMode::InherentSize => {
             let aspect_ratio = style.aspect_ratio();
-            let style_size = style
-                .size()
-                .maybe_resolve(parent_size, &resolve_calc_value)
-                .maybe_apply_aspect_ratio(aspect_ratio)
-                .maybe_add(box_sizing_adjustment);
+            let resolved_size = style.size().maybe_resolve(parent_size, &resolve_calc_value);
+            let style_size = resolved_size.maybe_apply_aspect_ratio(aspect_ratio).maybe_add(box_sizing_adjustment);
             let style_min_size = style
                 .min_size()
                 .maybe_resolve(parent_size, &resolve_calc_value)
@@ -59,7 +56,9 @@ where
                 style.max_size().maybe_resolve(parent_size, &resolve_calc_value).maybe_add(box_sizing_adjustment);
 
             let node_size = known_dimensions.or(style_size);
-            (node_size, style_min_size, style_max_size, aspect_ratio)
+            // A definite height is not overridden by the ratio (CSS Sizing 4 §5.1): the ratio only sizes an auto height.
+            let ratio_height = aspect_ratio.filter(|_| known_dimensions.height.or(resolved_size.height).is_none());
+            (node_size, style_min_size, style_max_size, ratio_height)
         }
     };
 
