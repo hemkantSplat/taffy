@@ -8,7 +8,8 @@ use crate::{CompactLength, Dimension};
 
 /// How a sizing keyword resolves to a used size
 pub(crate) enum SizingKeywordResolution {
-    /// The size is the result of measuring the item under the given available space constraint
+    /// The size is the result of measuring the item under the given available space constraint.
+    /// Like every available space a parent passes, it is the item's margin box: the item subtracts its own margins.
     Measure(AvailableSpace),
     /// The size resolves to an exact value without measuring the item
     Exact(f32),
@@ -17,8 +18,8 @@ pub(crate) enum SizingKeywordResolution {
 /// Resolve an item's size style in one axis if it is a sizing keyword (`min-content`,
 /// `max-content`, `fit-content`, `fit-content(...)`, or `stretch`).
 ///
-/// - `stretch_size` is the size the item would take if stretched to fill the available space
-///   (available space minus margins). Used by `fit-content` and `stretch`.
+/// - `available_size` is the space available to the item's margin box and `margin_sum` its margins in this
+///   axis: `stretch` resolves to the space less the margins, `fit-content` measures under the space.
 /// - `percent_resolution_basis` is the size that percentages resolve against in this axis.
 ///   Used by `fit-content(<percentage>)`.
 ///
@@ -27,7 +28,8 @@ pub(crate) enum SizingKeywordResolution {
 #[inline]
 pub(crate) fn resolve_sizing_keyword(
     style: Dimension,
-    stretch_size: Option<f32>,
+    available_size: Option<f32>,
+    margin_sum: f32,
     percent_resolution_basis: Option<f32>,
 ) -> Option<SizingKeywordResolution> {
     match style.tag() {
@@ -39,9 +41,11 @@ pub(crate) fn resolve_sizing_keyword(
         CompactLength::FIT_CONTENT_PERCENT_TAG => percent_resolution_basis
             .map(|basis| SizingKeywordResolution::Measure(AvailableSpace::Definite(basis * style.value()))),
         CompactLength::FIT_CONTENT_KEYWORD_TAG => {
-            stretch_size.map(|size| SizingKeywordResolution::Measure(AvailableSpace::Definite(size)))
+            available_size.map(|size| SizingKeywordResolution::Measure(AvailableSpace::Definite(size)))
         }
-        CompactLength::STRETCH_TAG => stretch_size.map(SizingKeywordResolution::Exact),
+        CompactLength::STRETCH_TAG => {
+            available_size.map(|size| SizingKeywordResolution::Exact(f32_max(size - margin_sum, 0.0)))
+        }
         _ => None,
     }
 }
@@ -52,8 +56,7 @@ pub(crate) fn resolve_sizing_keyword(
 ///
 /// - `area_size` is the size of the item's containing block (which insets and percentages
 ///   resolve against).
-/// - The stretch size in each axis is the containing block minus the item's insets and margins
-///   in that axis.
+/// - The space available to the item's margin box in each axis is the containing block minus the item's insets.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn resolve_absolute_sizing_keywords(
     tree: &mut impl LayoutPartialTree,
@@ -65,32 +68,22 @@ pub(crate) fn resolve_absolute_sizing_keywords(
     margin: Rect<Option<f32>>,
     sizing_mode: SizingMode,
 ) {
-    let stretch_size = Size {
-        width: f32_max(
-            area_size.width
-                - inset.left.unwrap_or(0.0)
-                - inset.right.unwrap_or(0.0)
-                - margin.left.unwrap_or(0.0)
-                - margin.right.unwrap_or(0.0),
-            0.0,
-        ),
-        height: f32_max(
-            area_size.height
-                - inset.top.unwrap_or(0.0)
-                - inset.bottom.unwrap_or(0.0)
-                - margin.top.unwrap_or(0.0)
-                - margin.bottom.unwrap_or(0.0),
-            0.0,
-        ),
+    let available_size = Size {
+        width: f32_max(area_size.width - inset.left.unwrap_or(0.0) - inset.right.unwrap_or(0.0), 0.0),
+        height: f32_max(area_size.height - inset.top.unwrap_or(0.0) - inset.bottom.unwrap_or(0.0), 0.0),
+    };
+    let margin_sum = Size {
+        width: margin.left.unwrap_or(0.0) + margin.right.unwrap_or(0.0),
+        height: margin.top.unwrap_or(0.0) + margin.bottom.unwrap_or(0.0),
     };
 
     let keyword_width = if known_dimensions.width.is_none() {
-        resolve_sizing_keyword(size_style.width, Some(stretch_size.width), Some(area_size.width))
+        resolve_sizing_keyword(size_style.width, Some(available_size.width), margin_sum.width, Some(area_size.width))
     } else {
         None
     };
     let keyword_height = if known_dimensions.height.is_none() {
-        resolve_sizing_keyword(size_style.height, Some(stretch_size.height), Some(area_size.height))
+        resolve_sizing_keyword(size_style.height, Some(available_size.height), margin_sum.height, Some(area_size.height))
     } else {
         None
     };
@@ -119,7 +112,7 @@ pub(crate) fn resolve_absolute_sizing_keywords(
                         node,
                         *known_dimensions,
                         area_size.map(Some),
-                        Size { width: available_width, height: AvailableSpace::Definite(stretch_size.height) },
+                        Size { width: available_width, height: AvailableSpace::Definite(available_size.height) },
                         sizing_mode,
                         AbsoluteAxis::Horizontal,
                         Line::FALSE,
@@ -137,7 +130,7 @@ pub(crate) fn resolve_absolute_sizing_keywords(
                             width: known_dimensions
                                 .width
                                 .map(AvailableSpace::Definite)
-                                .unwrap_or(AvailableSpace::Definite(stretch_size.width)),
+                                .unwrap_or(AvailableSpace::Definite(available_size.width)),
                             height: available_height,
                         },
                         sizing_mode,

@@ -961,8 +961,7 @@ fn determine_flex_base_size(
             // Note: `child.size` has already been resolved against aspect_ratio in generate_anonymous_flex_items
             // So B will just work here by using main_size without special handling for aspect_ratio
             let main_size = child.size.main(dir);
-            let main_stretch_size =
-                percent_resolution_main_size.maybe_sub(child.margin.main_axis_sum(dir)).maybe_max(0.0);
+            let main_margin_sum = child.margin.main_axis_sum(dir);
 
             // A flex basis that is a sizing keyword (min-content, max-content, fit-content,
             // fit-content(...), stretch) is used in place of the main size property: `stretch`
@@ -975,7 +974,12 @@ fn determine_flex_base_size(
                 // default constraint below
                 None
             } else if flex_basis_style.is_sizing_keyword() {
-                match resolve_sizing_keyword(flex_basis_style, main_stretch_size, percent_resolution_main_size) {
+                match resolve_sizing_keyword(
+                    flex_basis_style,
+                    percent_resolution_main_size,
+                    main_margin_sum,
+                    percent_resolution_main_size,
+                ) {
                     Some(SizingKeywordResolution::Exact(size)) => {
                         child.flex_basis_is_definite = true;
                         break 'flex_basis size;
@@ -993,7 +997,8 @@ fn determine_flex_base_size(
                 // determines the available space constraint the item is measured under
                 match resolve_sizing_keyword(
                     child.size_style.main(dir),
-                    main_stretch_size,
+                    percent_resolution_main_size,
+                    main_margin_sum,
                     percent_resolution_main_size,
                 ) {
                     Some(SizingKeywordResolution::Exact(size)) => {
@@ -1883,15 +1888,11 @@ fn determine_hypothetical_cross_size(
         // fit-content(...)) determines the available space constraint the item is measured under.
         // The `stretch` keyword is not resolved here: it stretches to the flex line, which is
         // handled in `determine_used_cross_size`
-        let cross_stretch_size = constants
-            .node_inner_size
-            .cross(constants.dir)
-            .map(|val| constants.divided_cross_space(val))
-            .maybe_sub(child.margin.cross_axis_sum(constants.dir))
-            .maybe_max(0.0);
+        let cross_space = constants.node_inner_size.cross(constants.dir).map(|val| constants.divided_cross_space(val));
         let child_available_cross = match resolve_sizing_keyword(
             child.size_style.cross(constants.dir),
-            cross_stretch_size,
+            cross_space,
+            child.margin.cross_axis_sum(constants.dir),
             constants.node_inner_size.cross(constants.dir),
         ) {
             Some(SizingKeywordResolution::Measure(available)) => available,

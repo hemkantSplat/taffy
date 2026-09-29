@@ -193,17 +193,18 @@ pub(super) fn align_and_position_item(
     // A size that is a sizing keyword (min-content, max-content, fit-content,
     // fit-content(...), stretch) either resolves to an exact size or is resolved
     // by measuring the item under the corresponding available space constraint
+    let margin_sum = Size {
+        width: margin.left.unwrap_or(0.0) + margin.right.unwrap_or(0.0),
+        height: margin.top.unwrap_or(0.0) + margin.bottom.unwrap_or(0.0) + baseline_shim,
+    };
     let keyword_width = inherent_size.width.is_none().then(|| {
-        resolve_sizing_keyword(
-            size_style.width,
-            Some(grid_area_minus_item_margins_size.width),
-            Some(grid_area_size.width),
-        )
+        resolve_sizing_keyword(size_style.width, Some(grid_area_size.width), margin_sum.width, Some(grid_area_size.width))
     });
     let keyword_height = inherent_size.height.is_none().then(|| {
         resolve_sizing_keyword(
             size_style.height,
-            Some(grid_area_minus_item_margins_size.height),
+            Some(grid_area_size.height),
+            margin_sum.height,
             Some(grid_area_size.height),
         )
     });

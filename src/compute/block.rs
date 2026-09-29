@@ -565,8 +565,13 @@ fn compute_inner(
     let mut items = generate_item_list(tree, node_id, container_content_box_size);
 
     // 2. Compute container width
+    // The offered space is this box's margin box, so its own margins come off first, as leaf and flex boxes do.
+    let own_margin = raw_margin.resolve_or_zero(parent_size.width, |val, basis| tree.calc(val, basis));
     let container_outer_width = known_dimensions.width.unwrap_or_else(|| {
-        let available_width = available_space.width.maybe_sub(content_box_inset.horizontal_axis_sum());
+        let available_width = available_space
+            .width
+            .maybe_sub(own_margin.horizontal_axis_sum())
+            .maybe_sub(content_box_inset.horizontal_axis_sum());
         let intrinsic_width = determine_content_based_container_width(tree, &items, available_width)
             + content_box_inset.horizontal_axis_sum();
         intrinsic_width.maybe_clamp(min_size.width, max_size.width).maybe_max(Some(padding_border_size.width))
@@ -927,11 +932,7 @@ fn resolve_stretch_height(
     container_inner_height: Option<f32>,
     item_y_margin_sum: f32,
 ) -> Option<f32> {
-    match resolve_sizing_keyword(
-        height_style,
-        container_inner_height.maybe_sub(item_y_margin_sum),
-        container_inner_height,
-    ) {
+    match resolve_sizing_keyword(height_style, container_inner_height, item_y_margin_sum, container_inner_height) {
         Some(SizingKeywordResolution::Exact(height)) => Some(height),
         _ => None,
     }
@@ -957,10 +958,12 @@ fn determine_content_based_container_width(
             .resolve_or_zero(available_space.width.into_option(), |val, basis| tree.calc(val, basis))
             .horizontal_axis_sum();
         let width = known_dimensions.width.unwrap_or_else(|| {
-            let item_available_width = match resolve_sizing_keyword(item.size_style.width, None, None) {
+            // The item subtracts its own margins from the space it is offered.
+            let item_available_width = match resolve_sizing_keyword(item.size_style.width, None, item_x_margin_sum, None)
+            {
                 Some(SizingKeywordResolution::Measure(available_width)) => available_width,
                 Some(SizingKeywordResolution::Exact(width)) => AvailableSpace::Definite(width),
-                None => available_space.width.maybe_sub(item_x_margin_sum),
+                None => available_space.width,
             };
             tree.measure_child_size(
                 item.node_id,
@@ -1084,15 +1087,15 @@ fn perform_final_layout_on_in_flow_children(
 
                 // A float with `width: auto` is shrink-to-fit (fit-content) sized: the available
                 // space clamped between its min-content and max-content sizes.
-                let available_width = (container_inner_width - item_non_auto_x_margin_sum).max(0.0);
                 let (item_known_width, item_available_width) = match resolve_sizing_keyword(
                     item.size_style.width,
-                    Some(available_width),
+                    Some(container_inner_width),
+                    item_non_auto_x_margin_sum,
                     Some(container_inner_width),
                 ) {
                     Some(SizingKeywordResolution::Measure(available)) => (None, available),
                     Some(SizingKeywordResolution::Exact(width)) => (Some(width), AvailableSpace::Definite(width)),
-                    None => (None, AvailableSpace::Definite(available_width)),
+                    None => (None, AvailableSpace::Definite(container_inner_width)),
                 };
                 let item_known_height = resolve_stretch_height(
                     item.size_style.height,
@@ -1275,8 +1278,12 @@ fn perform_final_layout_on_in_flow_children(
                 // Items with a sizing keyword width (min-content, max-content, fit-content,
                 // fit-content(...), stretch) resolve their width either directly or by measuring
                 // the item under the corresponding available space constraint
-                let keyword_width =
-                    resolve_sizing_keyword(item.size_style.width, Some(stretch_width), Some(container_inner_width))
+                let keyword_width = resolve_sizing_keyword(
+                    item.size_style.width,
+                    Some(stretch_width + item_non_auto_x_margin_sum),
+                    item_non_auto_x_margin_sum,
+                    Some(container_inner_width),
+                )
                         .map(|resolution| match resolution {
                             SizingKeywordResolution::Exact(width) => width,
                             SizingKeywordResolution::Measure(item_available_width) => tree.measure_child_size(
@@ -1318,7 +1325,9 @@ fn perform_final_layout_on_in_flow_children(
                 known_dimensions,
                 known_dimensions_are_definite: Size { width: true, height: true },
                 parent_size,
-                available_space: available_space.map_width(|_| AvailableSpace::Definite(stretch_width)),
+                // The item's margin box: it subtracts its own margins.
+                available_space: available_space
+                    .map_width(|_| AvailableSpace::Definite(stretch_width + item_non_auto_x_margin_sum)),
                 vertical_margins_are_collapsible: if item.is_in_same_bfc { Line::TRUE } else { Line::FALSE },
             };
 
