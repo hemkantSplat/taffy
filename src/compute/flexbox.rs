@@ -100,6 +100,8 @@ struct FlexItem {
 
     /// The position of the bottom edge of this item
     baseline: f32,
+    /// The item's last baseline in the container's coordinates, once it is laid out
+    last_baseline: f32,
 
     /// A temporary value for the main offset
     ///
@@ -542,11 +544,17 @@ fn compute_preliminary(tree: &mut impl LayoutFlexboxContainer, node: NodeId, inp
                 .map(|child| child.baseline)
         }
     });
+    // The last baseline mirrors it from the endmost line's endmost item (`last baseline` alignment is unsupported).
+    let last_line = if constants.is_wrap_reverse { flex_lines.first() } else { flex_lines.last() };
+    let last_vertical_baseline = last_line.and_then(|line| {
+        let item = if constants.is_column && constants.dir.is_reverse() { line.items.first() } else { line.items.last() };
+        item.map(|child| child.last_baseline)
+    });
 
     let mut output = LayoutOutput::from_sizes_and_baselines(
         constants.container_size,
         inflow_overflow_rect,
-        Baselines::from_first(first_vertical_baseline),
+        Baselines { first: first_vertical_baseline, last: last_vertical_baseline },
     );
     output.oof_candidates = candidates;
     output.oof_positioning_area =
@@ -778,6 +786,7 @@ fn generate_anonymous_flex_items(
                 content_flex_fraction: 0.0,
 
                 baseline: 0.0,
+                last_baseline: 0.0,
 
                 offset_main: 0.0,
                 offset_cross: 0.0,
@@ -2535,19 +2544,20 @@ fn calculate_flex_item(
         // Scroll containers' baselines are determined from their content as if scrolled to the initial
         // position, but are additionally clamped to their border box.
         // See https://github.com/w3c/csswg-drafts/issues/7660
-        let inner_baseline = {
-            let baseline = layout_output.baselines.first.unwrap_or(size.height);
+        let inner_baseline = |baseline: Option<f32>| {
+            let baseline = baseline.unwrap_or(size.height);
             if item.overflow.y.is_scroll_container() {
                 baseline.min(size.height).max(0.0)
             } else {
                 baseline
             }
         };
-        item.baseline = baseline_offset_cross + inner_baseline;
+        item.baseline = baseline_offset_cross + inner_baseline(layout_output.baselines.first);
+        item.last_baseline = baseline_offset_cross + inner_baseline(layout_output.baselines.last);
     } else {
         let baseline_offset_main = *total_offset_main + item.offset_main + item.margin.main_start(direction);
-        let inner_baseline = layout_output.baselines.first.unwrap_or(size.height);
-        item.baseline = baseline_offset_main + inner_baseline;
+        item.baseline = baseline_offset_main + layout_output.baselines.first.unwrap_or(size.height);
+        item.last_baseline = baseline_offset_main + layout_output.baselines.last.unwrap_or(size.height);
     }
 
     let location = if direction.is_row() {
