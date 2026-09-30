@@ -1,6 +1,7 @@
 //! Geometric primitives useful for layout
 
 use crate::util::sys::f32_max;
+use crate::util::MaybeMath;
 use crate::CompactLength;
 use crate::{style::Dimension, util::sys::f32_min};
 use core::ops::{Add, Sub};
@@ -615,6 +616,18 @@ impl Size<Option<f32>> {
             },
             None => self,
         }
+    }
+
+    /// Like [`Self::maybe_apply_aspect_ratio`], but the missing side follows the other side's used size, clamped by
+    /// its own `min_size` and `max_size` (CSS 2 §10.4, CSS Sizing 4 §5.1). A side that is `Some` is returned as is.
+    pub fn maybe_apply_aspect_ratio_to_used(
+        self,
+        aspect_ratio: Option<f32>,
+        min_size: Size<Option<f32>>,
+        max_size: Size<Option<f32>>,
+    ) -> Size<Option<f32>> {
+        let transferred = self.maybe_clamp(min_size, max_size).maybe_apply_aspect_ratio(aspect_ratio);
+        Size { width: self.width.or(transferred.width), height: self.height.or(transferred.height) }
     }
 }
 

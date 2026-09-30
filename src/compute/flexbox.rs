@@ -720,23 +720,19 @@ fn generate_anonymous_flex_items(
             let pb_sum = (padding + border).sum_axes();
             let box_sizing_adjustment =
                 if child_style.box_sizing() == BoxSizing::ContentBox { pb_sum } else { Size::ZERO };
+            let min_size = child_style.min_size().maybe_resolve(percent_resolution_size, |val, basis| tree.calc(val, basis));
+            let max_size = child_style.max_size().maybe_resolve(percent_resolution_size, |val, basis| tree.calc(val, basis));
             FlexItem {
                 node: child,
                 order: index as u32,
                 size: child_style
                     .size()
                     .maybe_resolve(percent_resolution_size, |val, basis| tree.calc(val, basis))
-                    .maybe_apply_aspect_ratio(aspect_ratio)
+                    .maybe_apply_aspect_ratio_to_used(aspect_ratio, min_size, max_size)
                     .maybe_add(box_sizing_adjustment),
                 size_style: child_style.size(),
-                min_size: child_style
-                    .min_size()
-                    .maybe_resolve(percent_resolution_size, |val, basis| tree.calc(val, basis))
-                    .maybe_add(box_sizing_adjustment),
-                max_size: child_style
-                    .max_size()
-                    .maybe_resolve(percent_resolution_size, |val, basis| tree.calc(val, basis))
-                    .maybe_add(box_sizing_adjustment),
+                min_size: min_size.maybe_add(box_sizing_adjustment),
+                max_size: max_size.maybe_add(box_sizing_adjustment),
                 aspect_ratio,
 
                 relative_inset: if child_style.position() == Position::Relative {
