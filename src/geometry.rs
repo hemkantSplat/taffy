@@ -630,27 +630,37 @@ impl Size<Option<f32>> {
         Size { width: self.width.or(transferred.width), height: self.height.or(transferred.height) }
     }
 
-    /// The (min, max) sizes of a box with this preferred size: each transfers through the ratio only onto an auto
-    /// axis without its own, a transferred min capped by that axis's max, a max floored by its min (Sizing 4 §5.1).
+    /// The (min, max) sizes of a box with this preferred size (Sizing 4 §5.1): an auto axis takes the tighter
+    /// of its own and the carried one (a carried min capped by its max, a carried max floored by its min).
     pub fn maybe_transfer_min_max_size(
         self,
         aspect_ratio: Option<f32>,
         min_size: Size<Option<f32>>,
         max_size: Size<Option<f32>>,
     ) -> (Size<Option<f32>>, Size<Option<f32>>) {
-        let transferred_min = min_size.maybe_apply_aspect_ratio(aspect_ratio).maybe_min(max_size);
-        let transferred_max = max_size.maybe_apply_aspect_ratio(aspect_ratio).maybe_max(min_size);
-        let onto_auto = |preferred: Option<f32>, own: Option<f32>, transferred: Option<f32>| match preferred {
-            None => own.or(transferred),
-            Some(_) => own,
+        // Each axis's size carried through the ratio onto the other axis.
+        let through_ratio = |size: Size<Option<f32>>| match aspect_ratio {
+            Some(ratio) => {
+                Size { width: size.height.map(|height| height * ratio), height: size.width.map(|width| width / ratio) }
+            }
+            None => Size::NONE,
+        };
+        let carried_min = through_ratio(min_size).maybe_min(max_size);
+        let carried_max = through_ratio(max_size).maybe_max(min_size);
+        let onto_auto = |preferred: Option<f32>, own: Option<f32>, carried: Option<f32>, tighter: fn(f32, f32) -> f32| {
+            match (preferred, own, carried) {
+                (None, Some(own), Some(carried)) => Some(tighter(own, carried)),
+                (None, own, carried) => own.or(carried),
+                (Some(_), own, _) => own,
+            }
         };
         let min = Size {
-            width: onto_auto(self.width, min_size.width, transferred_min.width),
-            height: onto_auto(self.height, min_size.height, transferred_min.height),
+            width: onto_auto(self.width, min_size.width, carried_min.width, f32_max),
+            height: onto_auto(self.height, min_size.height, carried_min.height, f32_max),
         };
         let max = Size {
-            width: onto_auto(self.width, max_size.width, transferred_max.width),
-            height: onto_auto(self.height, max_size.height, transferred_max.height),
+            width: onto_auto(self.width, max_size.width, carried_max.width, f32_min),
+            height: onto_auto(self.height, max_size.height, carried_max.height, f32_min),
         };
         (min, max)
     }
