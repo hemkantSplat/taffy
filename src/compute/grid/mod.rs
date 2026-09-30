@@ -415,28 +415,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
 
     if !rerun_column_sizing {
         intrinsic_column_contribution_changed =
-            items.iter_mut().filter(|item| item.crosses_intrinsic_column).any(|item| {
-                let grid_area_size = item.grid_area_size(
-                    AbstractAxis::Inline,
-                    &columns,
-                    &rows,
-                    inner_node_size,
-                    |track: &GridTrack, _| Some(track.base_size),
-                    &|val, basis| tree.calc(val, basis),
-                );
-                let available_space = grid_area_size.with(AbstractAxis::Inline, None);
-                let new_min_content_contribution =
-                    item.min_content_contribution(AbstractAxis::Inline, tree, grid_area_size, available_space);
-
-                let has_changed = Some(new_min_content_contribution) != item.min_content_contribution_cache.width;
-
-                item.grid_area_size_cache = Some(grid_area_size);
-                item.min_content_contribution_cache.width = Some(new_min_content_contribution);
-                item.max_content_contribution_cache.width = None;
-                item.minimum_contribution_cache.width = None;
-
-                has_changed
-            });
+            refresh_intrinsic_contributions(tree, AbstractAxis::Inline, &columns, &rows, &mut items, inner_node_size);
         rerun_column_sizing = intrinsic_column_contribution_changed;
     } else {
         // Clear intrinsic width caches
@@ -479,28 +458,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
 
         if !rerun_row_sizing {
             intrinsic_row_contribution_changed =
-                items.iter_mut().filter(|item| item.crosses_intrinsic_column).any(|item| {
-                    let grid_area_size = item.grid_area_size(
-                        AbstractAxis::Block,
-                        &rows,
-                        &columns,
-                        inner_node_size,
-                        |track: &GridTrack, _| Some(track.base_size),
-                        &|val, basis| tree.calc(val, basis),
-                    );
-                    let available_space = grid_area_size.with(AbstractAxis::Block, None);
-                    let new_min_content_contribution =
-                        item.min_content_contribution(AbstractAxis::Block, tree, grid_area_size, available_space);
-
-                    let has_changed = Some(new_min_content_contribution) != item.min_content_contribution_cache.height;
-
-                    item.grid_area_size_cache = Some(grid_area_size);
-                    item.min_content_contribution_cache.height = Some(new_min_content_contribution);
-                    item.max_content_contribution_cache.height = None;
-                    item.minimum_contribution_cache.height = None;
-
-                    has_changed
-                });
+                refresh_intrinsic_contributions(tree, AbstractAxis::Block, &rows, &columns, &mut items, inner_node_size);
             rerun_row_sizing = intrinsic_row_contribution_changed;
         } else {
             items.iter_mut().for_each(|item| {
@@ -866,6 +824,37 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
     output.oof_candidates = oof_candidates;
     output.oof_positioning_area = oof_positioning_area;
     output
+}
+
+/// Re-measures, from the other axis's track sizes, the min-content contribution in `axis` of every item crossing an
+/// intrinsic track in `axis` (css-grid-1 §12.1 steps 3 and 4); returns whether any contribution changed.
+fn refresh_intrinsic_contributions(
+    tree: &mut impl LayoutGridContainer,
+    axis: AbstractAxis,
+    axis_tracks: &[GridTrack],
+    other_axis_tracks: &[GridTrack],
+    items: &mut [GridItem],
+    inner_node_size: Size<Option<f32>>,
+) -> bool {
+    let mut changed = false;
+    // Every item is refreshed: stopping at the first change would leave the rest sized from stale caches.
+    for item in items.iter_mut().filter(|item| item.crosses_intrinsic_track(axis)) {
+        let grid_area_size = item.grid_area_size(
+            axis,
+            axis_tracks,
+            other_axis_tracks,
+            inner_node_size,
+            |track: &GridTrack, _| Some(track.base_size),
+            &|val, basis| tree.calc(val, basis),
+        );
+        let contribution = item.min_content_contribution(axis, tree, grid_area_size, grid_area_size.with(axis, None));
+        changed |= item.min_content_contribution_cache.get(axis) != Some(contribution);
+        item.grid_area_size_cache = Some(grid_area_size);
+        item.min_content_contribution_cache.set(axis, Some(contribution));
+        item.max_content_contribution_cache.set(axis, None);
+        item.minimum_contribution_cache.set(axis, None);
+    }
+    changed
 }
 
 /// Resolve the static-position rectangle (the grid area determined by the grid-placement
