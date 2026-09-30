@@ -56,7 +56,7 @@ pub(crate) fn resolve_sizing_keyword(
 ///
 /// - `area_size` is the size of the item's containing block (which insets and percentages
 ///   resolve against).
-/// - The space available to the item's margin box in each axis is the containing block minus the item's insets.
+/// - `available_size` is the space available to the item's margin box: its inset-modified containing block.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn resolve_absolute_sizing_keywords(
     tree: &mut impl LayoutPartialTree,
@@ -64,14 +64,10 @@ pub(crate) fn resolve_absolute_sizing_keywords(
     known_dimensions: &mut Size<Option<f32>>,
     size_style: Size<Dimension>,
     area_size: Size<f32>,
-    inset: Rect<Option<f32>>,
+    available_size: Size<f32>,
     margin: Rect<Option<f32>>,
     sizing_mode: SizingMode,
 ) {
-    let available_size = Size {
-        width: f32_max(area_size.width - inset.left.unwrap_or(0.0) - inset.right.unwrap_or(0.0), 0.0),
-        height: f32_max(area_size.height - inset.top.unwrap_or(0.0) - inset.bottom.unwrap_or(0.0), 0.0),
-    };
     let margin_sum = Size {
         width: margin.left.unwrap_or(0.0) + margin.right.unwrap_or(0.0),
         height: margin.top.unwrap_or(0.0) + margin.bottom.unwrap_or(0.0),

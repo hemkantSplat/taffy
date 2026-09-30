@@ -14,7 +14,7 @@ use crate::tree::{
     Layout, LayoutContainingBlock, LayoutOutput, LayoutPartialTreeExt, NodeId, OofCandidate, OofCandidates,
     OofPositioningArea, SizingMode,
 };
-use crate::util::sys::{f32_max, Vec};
+use crate::util::sys::{f32_max, f32_min, Vec};
 use crate::util::{MaybeMath, MaybeResolve, ResolveOrZero};
 use crate::{AxisStaticEdge, BoxSizing, Direction};
 
@@ -52,6 +52,28 @@ pub fn resolve_static_offset(
         x: resolve_axis(static_position.x, final_size.width, resolved_margin.left, resolved_margin.right),
         y: resolve_axis(static_position.y, final_size.height, resolved_margin.top, resolved_margin.bottom),
     }
+}
+
+/// The inset-modified containing block's size in one axis (css-position-3): the definite insets bound it; with both
+/// insets auto the static position does, from its aligned edge to the area's far edge, or centred on it.
+fn inset_modified_size(
+    start: Option<f32>,
+    end: Option<f32>,
+    static_position: crate::tree::AxisStaticPosition,
+    area_start: f32,
+    area_size: f32,
+) -> f32 {
+    let area_end = area_start + area_size;
+    let size = match (start, end, static_position.align.keyword) {
+        (None, None, AxisStaticEdge::Start) => area_end - static_position.area.start,
+        (None, None, AxisStaticEdge::End) => static_position.area.end - area_start,
+        (None, None, AxisStaticEdge::Center) => {
+            let center = (static_position.area.start + static_position.area.end) / 2.0;
+            2.0 * f32_min(center - area_start, area_end - center)
+        }
+        (start, end, _) => area_size - start.unwrap_or(0.0) - end.unwrap_or(0.0),
+    };
+    f32_max(size, 0.0)
 }
 
 /// Run the out-of-flow positioning pass for `node_id` after its layout algorithm has produced
@@ -252,6 +274,11 @@ pub(crate) fn perform_oof_layout(
         let right = child_style.inset().right.maybe_resolve(area_width, |val, basis| tree.calc(val, basis));
         let top = child_style.inset().top.maybe_resolve(area_height, |val, basis| tree.calc(val, basis));
         let bottom = child_style.inset().bottom.maybe_resolve(area_height, |val, basis| tree.calc(val, basis));
+        // The space available to the box's margin box: it subtracts its own margins, as every child does.
+        let available_size = Size {
+            width: inset_modified_size(left, right, candidate.static_position.x, area_offset.x, area_width),
+            height: inset_modified_size(top, bottom, candidate.static_position.y, area_offset.y, area_height),
+        };
 
         // Compute known dimensions from min/max/inherent size styles
         let size_style = child_style.size();
@@ -285,7 +312,7 @@ pub(crate) fn perform_oof_layout(
                 &mut known_dimensions,
                 size_style,
                 area_size,
-                Rect { left, right, top, bottom },
+                available_size,
                 margin,
                 SizingMode::ContentSize,
             );
@@ -314,9 +341,8 @@ pub(crate) fn perform_oof_layout(
             known_dimensions = known_dimensions.maybe_apply_aspect_ratio(aspect_ratio).maybe_clamp(min_size, max_size);
         }
 
-        // Shrink-to-fit width is bounded by the containing block less the definite insets (CSS 2 10.3.7); the
-        // box subtracts its own margins from the available space, as every child does.
-        let available_width = f32_max(area_width - left.unwrap_or(0.0) - right.unwrap_or(0.0), 0.0);
+        // Shrink-to-fit sizes within the inset-modified containing block (CSS 2 10.3.7, 10.6.4).
+        let available_space = available_size.maybe_clamp(min_size, max_size).map(AvailableSpace::Definite);
 
         let final_size = match (known_dimensions.width, known_dimensions.height) {
             (Some(width), Some(height)) => Size { width, height },
@@ -325,10 +351,7 @@ pub(crate) fn perform_oof_layout(
                     candidate.node,
                     known_dimensions,
                     area_size.map(Some),
-                    Size {
-                        width: AvailableSpace::Definite(available_width.maybe_clamp(min_size.width, max_size.width)),
-                        height: AvailableSpace::Definite(area_height.maybe_clamp(min_size.height, max_size.height)),
-                    },
+                    available_space,
                     SizingMode::ContentSize,
                     Line::FALSE,
                 );
@@ -341,10 +364,7 @@ pub(crate) fn perform_oof_layout(
             candidate.node,
             final_size.map(Some),
             area_size.map(Some),
-            Size {
-                width: AvailableSpace::Definite(available_width.maybe_clamp(min_size.width, max_size.width)),
-                height: AvailableSpace::Definite(area_height.maybe_clamp(min_size.height, max_size.height)),
-            },
+            available_space,
             SizingMode::ContentSize,
             Line::FALSE,
         );
