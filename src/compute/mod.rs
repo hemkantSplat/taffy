@@ -88,19 +88,15 @@ pub fn compute_root_layout(
             let box_sizing_adjustment =
                 if style.box_sizing() == BoxSizing::ContentBox { padding_border_size } else { Size::ZERO };
 
-            let min_size = style
-                .min_size()
-                .maybe_resolve(parent_size, |val, basis| tree.calc(val, basis))
-                .maybe_apply_aspect_ratio(aspect_ratio)
-                .maybe_add(box_sizing_adjustment);
-            let max_size = style
-                .max_size()
-                .maybe_resolve(parent_size, |val, basis| tree.calc(val, basis))
-                .maybe_apply_aspect_ratio(aspect_ratio)
-                .maybe_add(box_sizing_adjustment);
-            let clamped_style_size = style
-                .size()
-                .maybe_resolve(parent_size, |val, basis| tree.calc(val, basis))
+            let resolved_size = style.size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis));
+            let (min_size, max_size) = resolved_size.maybe_transfer_min_max_size(
+                aspect_ratio,
+                style.min_size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
+                style.max_size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
+            );
+            let (min_size, max_size) =
+                (min_size.maybe_add(box_sizing_adjustment), max_size.maybe_add(box_sizing_adjustment));
+            let clamped_style_size = resolved_size
                 .maybe_apply_aspect_ratio(aspect_ratio)
                 .maybe_add(box_sizing_adjustment)
                 .maybe_clamp(min_size, max_size);

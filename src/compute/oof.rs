@@ -255,22 +255,16 @@ pub(crate) fn perform_oof_layout(
 
         // Compute known dimensions from min/max/inherent size styles
         let size_style = child_style.size();
-        let style_size = size_style
-            .maybe_resolve(area_size, |val, basis| tree.calc(val, basis))
-            .maybe_apply_aspect_ratio(aspect_ratio)
-            .maybe_add(box_sizing_adjustment);
-        let min_size = child_style
-            .min_size()
-            .maybe_resolve(area_size, |val, basis| tree.calc(val, basis))
-            .maybe_apply_aspect_ratio(aspect_ratio)
-            .maybe_add(box_sizing_adjustment)
-            .or(padding_border_sum.map(Some))
-            .maybe_max(padding_border_sum);
-        let max_size = child_style
-            .max_size()
-            .maybe_resolve(area_size, |val, basis| tree.calc(val, basis))
-            .maybe_apply_aspect_ratio(aspect_ratio)
-            .maybe_add(box_sizing_adjustment);
+        let resolved_size = size_style.maybe_resolve(area_size, |val, basis| tree.calc(val, basis));
+        let (min_size, max_size) = resolved_size.maybe_transfer_min_max_size(
+            aspect_ratio,
+            child_style.min_size().maybe_resolve(area_size, |val, basis| tree.calc(val, basis)),
+            child_style.max_size().maybe_resolve(area_size, |val, basis| tree.calc(val, basis)),
+        );
+        let style_size = resolved_size.maybe_apply_aspect_ratio(aspect_ratio).maybe_add(box_sizing_adjustment);
+        let min_size =
+            min_size.maybe_add(box_sizing_adjustment).or(padding_border_sum.map(Some)).maybe_max(padding_border_sum);
+        let max_size = max_size.maybe_add(box_sizing_adjustment);
         let mut known_dimensions = style_size.maybe_clamp(min_size, max_size);
 
         let is_replaced = child_style.is_compressible_replaced();

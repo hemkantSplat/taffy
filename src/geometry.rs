@@ -629,6 +629,31 @@ impl Size<Option<f32>> {
         let transferred = self.maybe_clamp(min_size, max_size).maybe_apply_aspect_ratio(aspect_ratio);
         Size { width: self.width.or(transferred.width), height: self.height.or(transferred.height) }
     }
+
+    /// The (min, max) sizes of a box with this preferred size: each transfers through the ratio only onto an auto
+    /// axis without its own, a transferred min capped by that axis's max, a max floored by its min (Sizing 4 §5.1).
+    pub fn maybe_transfer_min_max_size(
+        self,
+        aspect_ratio: Option<f32>,
+        min_size: Size<Option<f32>>,
+        max_size: Size<Option<f32>>,
+    ) -> (Size<Option<f32>>, Size<Option<f32>>) {
+        let transferred_min = min_size.maybe_apply_aspect_ratio(aspect_ratio).maybe_min(max_size);
+        let transferred_max = max_size.maybe_apply_aspect_ratio(aspect_ratio).maybe_max(min_size);
+        let onto_auto = |preferred: Option<f32>, own: Option<f32>, transferred: Option<f32>| match preferred {
+            None => own.or(transferred),
+            Some(_) => own,
+        };
+        let min = Size {
+            width: onto_auto(self.width, min_size.width, transferred_min.width),
+            height: onto_auto(self.height, min_size.height, transferred_min.height),
+        };
+        let max = Size {
+            width: onto_auto(self.width, max_size.width, transferred_max.width),
+            height: onto_auto(self.height, max_size.height, transferred_max.height),
+        };
+        (min, max)
+    }
 }
 
 impl<T> Size<Option<T>> {

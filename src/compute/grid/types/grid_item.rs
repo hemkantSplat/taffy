@@ -297,21 +297,15 @@ impl GridItem {
         let padding_border_size = (padding + border).sum_axes();
         let box_sizing_adjustment =
             if self.box_sizing == BoxSizing::ContentBox { padding_border_size } else { Size::ZERO };
-        let inherent_size = self
-            .size
-            .maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis))
-            .maybe_apply_aspect_ratio(aspect_ratio)
-            .maybe_add(box_sizing_adjustment);
-        let min_size = self
-            .min_size
-            .maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis))
-            .maybe_apply_aspect_ratio(aspect_ratio)
-            .maybe_add(box_sizing_adjustment);
-        let max_size = self
-            .max_size
-            .maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis))
-            .maybe_apply_aspect_ratio(aspect_ratio)
-            .maybe_add(box_sizing_adjustment);
+        let resolved_size = self.size.maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis));
+        let inherent_size = resolved_size.maybe_apply_aspect_ratio(aspect_ratio).maybe_add(box_sizing_adjustment);
+        let (min_size, max_size) = resolved_size.maybe_transfer_min_max_size(
+            aspect_ratio,
+            self.min_size.maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis)),
+            self.max_size.maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis)),
+        );
+        let (min_size, max_size) =
+            (min_size.maybe_add(box_sizing_adjustment), max_size.maybe_add(box_sizing_adjustment));
 
         let grid_area_minus_item_margins_size = grid_area_size.maybe_sub(margins).maybe_max(Size::ZERO);
 
@@ -620,18 +614,19 @@ impl GridItem {
         let padding_border_size = (padding + border).sum_axes();
         let box_sizing_adjustment =
             if self.box_sizing == BoxSizing::ContentBox { padding_border_size } else { Size::ZERO };
-        self.size
-            .maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis))
+        let resolved_size = self.size.maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis));
+        let (min_size, max_size) = resolved_size.maybe_transfer_min_max_size(
+            self.aspect_ratio,
+            self.min_size.maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis)),
+            self.max_size.maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis)),
+        );
+        // A size suggestion is clamped by the axis's definite max size (css-grid-1 §6.6), a ratio-derived one included.
+        resolved_size
             .maybe_apply_aspect_ratio(self.aspect_ratio)
             .maybe_add(box_sizing_adjustment)
             .get(axis)
-            .or_else(|| {
-                self.min_size
-                    .maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis))
-                    .maybe_apply_aspect_ratio(self.aspect_ratio)
-                    .maybe_add(box_sizing_adjustment)
-                    .get(axis)
-            })
+            .maybe_min(max_size.maybe_add(box_sizing_adjustment).get(axis))
+            .or_else(|| min_size.maybe_add(box_sizing_adjustment).get(axis))
             .or_else(|| self.overflow.get(axis).maybe_into_automatic_min_size())
             .unwrap_or_else(|| {
                 // Automatic minimum size. See https://www.w3.org/TR/css-grid-1/#min-size-auto

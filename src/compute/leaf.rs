@@ -50,7 +50,9 @@ where
             let max_size = style.max_size().maybe_resolve(parent_size, &resolve_calc_value);
             let style_size =
                 resolved_size.maybe_apply_aspect_ratio_to_used(aspect_ratio, min_size, max_size).maybe_add(box_sizing_adjustment);
-            let style_min_size = min_size.maybe_apply_aspect_ratio(aspect_ratio).maybe_add(box_sizing_adjustment);
+            // A transferred max never caps the content, the ratio-dependent axis's automatic minimum (Sizing 4 §5.2).
+            let (style_min_size, _) = resolved_size.maybe_transfer_min_max_size(aspect_ratio, min_size, max_size);
+            let style_min_size = style_min_size.maybe_add(box_sizing_adjustment);
             let style_max_size = max_size.maybe_add(box_sizing_adjustment);
 
             let node_size = known_dimensions.or(style_size);
@@ -146,9 +148,11 @@ where
         .or(node_size)
         .unwrap_or(measured_size + content_box_inset.sum_axes())
         .maybe_clamp(node_min_size, node_max_size);
+    // The ratio-derived height is the ratio-dependent side, so its own min and max still bound it (CSS Sizing 4 §5.1).
     let size = Size {
         width: clamped_size.width,
-        height: f32_max(clamped_size.height, aspect_ratio.map(|ratio| clamped_size.width / ratio).unwrap_or(0.0)),
+        height: f32_max(clamped_size.height, aspect_ratio.map(|ratio| clamped_size.width / ratio).unwrap_or(0.0))
+            .maybe_clamp(node_min_size.height, node_max_size.height),
     };
     let size = size.maybe_max(padding_border.sum_axes().map(Some));
 
