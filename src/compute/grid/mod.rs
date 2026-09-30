@@ -51,7 +51,11 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
     node: NodeId,
     inputs: LayoutInput,
 ) -> LayoutOutput {
-    let LayoutInput { known_dimensions, parent_size, available_space, run_mode, .. } = inputs;
+    let LayoutInput { known_dimensions, parent_size, mut available_space, run_mode, .. } = inputs;
+    // A grid's min-content block size is its max-content block size, as a block container's is (CSS Sizing 3 §5.1).
+    if available_space.height == AvailableSpace::MinContent {
+        available_space.height = AvailableSpace::MaxContent;
+    }
 
     let style = tree.get_grid_container_style(node);
     let direction = style.direction();
