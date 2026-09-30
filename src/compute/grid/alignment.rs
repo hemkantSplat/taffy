@@ -82,6 +82,31 @@ pub(super) fn align_tracks(
     }
 }
 
+/// The self-alignment `normal` gives a grid item (css-grid-1 §6.2): start for a replaced item with a ratio, sized from
+/// its natural size as a block-level box, else stretch, as an automatic size that a ratio carries between the axes.
+pub(super) fn normal_self_alignment(is_replaced: bool, aspect_ratio: Option<f32>) -> AlignSelf {
+    if is_replaced && aspect_ratio.is_some() {
+        AlignSelf::START
+    } else {
+        AlignSelf::STRETCH
+    }
+}
+
+/// The preferred size a grid item's min and max sizes transfer against (CSS Sizing 4 §5.1): a specified stretch is a
+/// definite size, while `normal`'s stays automatic, so the ratio still carries min and max sizes onto it.
+pub(super) fn transfer_basis(
+    resolved_size: Size<Option<f32>>,
+    stretched_size: Size<Option<f32>>,
+    specified: Size<bool>,
+    box_sizing_adjustment: Size<f32>,
+) -> Size<Option<f32>> {
+    let specified_stretch = Size {
+        width: stretched_size.width.filter(|_| specified.width),
+        height: stretched_size.height.filter(|_| specified.height),
+    };
+    resolved_size.or(specified_stretch.maybe_sub(box_sizing_adjustment))
+}
+
 /// Align and size a grid item into it's final position
 #[allow(clippy::too_many_arguments)]
 pub(super) fn align_and_position_item(
@@ -142,34 +167,28 @@ pub(super) fn align_and_position_item(
     let size_style = style.size();
     let resolved_size = size_style.maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis));
     let inherent_size = resolved_size.maybe_apply_aspect_ratio(aspect_ratio).maybe_add(box_sizing_adjustment);
-    let (min_size, max_size) = resolved_size.maybe_transfer_min_max_size(
-        aspect_ratio,
-        style.min_size().maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis)),
-        style.max_size().maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis)),
-    );
-    let min_size = min_size
-        .maybe_add(box_sizing_adjustment)
-        .or(padding_border_size.map(Some))
-        .maybe_max(padding_border_size);
-    let max_size = max_size.maybe_add(box_sizing_adjustment);
+    let style_min_size = style.min_size().maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis));
+    let style_max_size = style.max_size().maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis));
+    let is_replaced = style.is_compressible_replaced();
 
     // Resolve default alignment styles if they are set on neither the parent or the node itself
-    // Note: if the child has a preferred aspect ratio but neither width or height are set, then the width is stretched
-    // and the then height is calculated from the width according the aspect ratio
-    // See: https://www.w3.org/TR/css-grid-1/#grid-item-sizing
+    let specified_alignment = InBothAbsAxis {
+        horizontal: justify_self.or(container_alignment_styles.horizontal),
+        vertical: align_self.or(container_alignment_styles.vertical),
+    };
     let alignment_styles = InBothAbsAxis {
-        horizontal: justify_self.or(container_alignment_styles.horizontal).unwrap_or_else(|| {
+        horizontal: specified_alignment.horizontal.unwrap_or_else(|| {
             if inherent_size.width.is_some() || size_style.width.is_sizing_keyword() {
                 AlignSelf::START
             } else {
-                AlignSelf::STRETCH
+                normal_self_alignment(is_replaced, aspect_ratio)
             }
         }),
-        vertical: align_self.or(container_alignment_styles.vertical).unwrap_or_else(|| {
-            if inherent_size.height.is_some() || size_style.height.is_sizing_keyword() || aspect_ratio.is_some() {
+        vertical: specified_alignment.vertical.unwrap_or_else(|| {
+            if inherent_size.height.is_some() || size_style.height.is_sizing_keyword() {
                 AlignSelf::START
             } else {
-                AlignSelf::STRETCH
+                normal_self_alignment(is_replaced, aspect_ratio)
             }
         }),
     };
@@ -185,6 +204,29 @@ pub(super) fn align_and_position_item(
         width: grid_area_size.width.maybe_sub(margin.left).maybe_sub(margin.right).max(0.0),
         height: (grid_area_size.height.maybe_sub(margin.top).maybe_sub(margin.bottom) - baseline_shim).max(0.0),
     };
+
+    // An axis stretches to the area unless its margins are auto or the item is out of flow.
+    let stretched_size = Size {
+        width: (alignment_styles.horizontal == AlignSelf::STRETCH
+            && margin.left.is_some()
+            && margin.right.is_some()
+            && !position.is_out_of_flow())
+            .then_some(grid_area_minus_item_margins_size.width),
+        height: (alignment_styles.vertical == AlignSelf::STRETCH
+            && margin.top.is_some()
+            && margin.bottom.is_some()
+            && !position.is_out_of_flow())
+            .then_some(grid_area_minus_item_margins_size.height),
+    };
+    let specified =
+        Size { width: specified_alignment.horizontal.is_some(), height: specified_alignment.vertical.is_some() };
+    let (min_size, max_size) = transfer_basis(resolved_size, stretched_size, specified, box_sizing_adjustment)
+        .maybe_transfer_min_max_size(aspect_ratio, style_min_size, style_max_size);
+    let min_size = min_size
+        .maybe_add(box_sizing_adjustment)
+        .or(padding_border_size.map(Some))
+        .maybe_max(padding_border_size);
+    let max_size = max_size.maybe_add(box_sizing_adjustment);
 
     // A size that is a sizing keyword (min-content, max-content, fit-content,
     // fit-content(...), stretch) either resolves to an exact size or is resolved
@@ -254,19 +296,8 @@ pub(super) fn align_and_position_item(
             });
         }
 
-        // Apply width based on stretch alignment if:
-        //  - Alignment style is "stretch"
-        //  - The node is not absolutely positioned
-        //  - The node does not have auto margins in this axis.
-        if margin.left.is_some()
-            && margin.right.is_some()
-            && alignment_styles.horizontal == AlignSelf::STRETCH
-            && !position.is_out_of_flow()
-        {
-            return Some(grid_area_minus_item_margins_size.width);
-        }
-
-        None
+        // Apply width based on stretch alignment
+        stretched_size.width
     });
 
     // Reapply aspect ratio after stretch and absolute position width adjustments
@@ -303,19 +334,8 @@ pub(super) fn align_and_position_item(
             });
         }
 
-        // Apply height based on stretch alignment if:
-        //  - Alignment style is "stretch"
-        //  - The node is not absolutely positioned
-        //  - The node does not have auto margins in this axis.
-        if margin.top.is_some()
-            && margin.bottom.is_some()
-            && alignment_styles.vertical == AlignSelf::STRETCH
-            && !position.is_out_of_flow()
-        {
-            return Some(grid_area_minus_item_margins_size.height);
-        }
-
-        None
+        // Apply height based on stretch alignment
+        stretched_size.height
     });
     // Reapply aspect ratio after stretch and absolute position height adjustments
     let Size { width, height } = Size { width, height }.maybe_apply_aspect_ratio(aspect_ratio);

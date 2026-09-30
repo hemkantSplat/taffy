@@ -41,8 +41,8 @@ pub(super) fn place_grid_items<'a, S>(
     items: &mut Vec<GridItem>,
     children_iter: impl Iterator<Item = (usize, NodeId, S)>,
     grid_auto_flow: GridAutoFlow,
-    align_items: AlignItems,
-    justify_items: AlignItems,
+    align_items: Option<AlignItems>,
+    justify_items: Option<AlignItems>,
     named_line_resolver: &NamedLineResolver<<S as CoreStyle>::CustomIdent>,
 ) where
     S: GridItemStyle + 'a,
@@ -413,8 +413,8 @@ mod tests {
                 &mut items,
                 children_iter,
                 flow,
-                AlignSelf::START,
-                AlignSelf::START,
+                Some(AlignSelf::START),
+                Some(AlignSelf::START),
                 // TODO: actually test named line resolution
                 &name_resolver,
             );
@@ -649,8 +649,8 @@ mod tests {
                 &mut items,
                 children.iter().map(|(index, style)| (*index, NodeId::from(*index), style)),
                 GridAutoFlow::Row,
-                AlignSelf::START,
-                AlignSelf::START,
+                Some(AlignSelf::START),
+                Some(AlignSelf::START),
                 &name_resolver,
             );
             assert_eq!(items[0].column, Line { start: OriginZeroLine(-10_000), end: OriginZeroLine(-9_999) });

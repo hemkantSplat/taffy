@@ -2,7 +2,7 @@
 //! <https://www.w3.org/TR/css-grid-1>
 use crate::geometry::{AbsoluteAxis, AbstractAxis, InBothAbsAxis};
 use crate::geometry::{Line, Point, Rect, Size};
-use crate::style::{AlignItems, AvailableSpace, Overflow};
+use crate::style::{AvailableSpace, Overflow};
 use crate::tree::{
     AxisStaticAlign, AxisStaticEdge, AxisStaticPosition, Baselines, Layout, LayoutInput, LayoutOutput,
     LayoutPartialTreeExt, NodeId, OofCandidate, OofCandidates, OofPositioningArea, RunMode, SizingMode,
@@ -251,8 +251,8 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         &mut items,
         in_flow_children_iter,
         style.grid_auto_flow(),
-        align_items.unwrap_or(AlignItems::STRETCH),
-        justify_items.unwrap_or(AlignItems::STRETCH),
+        align_items,
+        justify_items,
         &name_resolver,
     );
 

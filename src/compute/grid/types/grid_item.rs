@@ -1,8 +1,9 @@
 //! Contains GridItem used to represent a single grid item during layout
 use super::GridTrack;
 use crate::compute::common::sizing_keyword::{resolve_sizing_keyword, SizingKeywordResolution};
+use crate::compute::grid::alignment::{normal_self_alignment, transfer_basis};
 use crate::compute::grid::OriginZeroLine;
-use crate::geometry::AbstractAxis;
+use crate::geometry::{AbsoluteAxis, AbstractAxis};
 use crate::geometry::{Line, Point, Rect, Size};
 use crate::style::{AlignItems, AlignSelf, AvailableSpace, Dimension, LengthPercentageAuto, Overflow};
 use crate::tree::{LayoutPartialTree, LayoutPartialTreeExt, NodeId, OofCandidates, SizingMode};
@@ -47,10 +48,10 @@ pub(in super::super) struct GridItem {
     pub border: Rect<LengthPercentage>,
     /// The item's margin style
     pub margin: Rect<LengthPercentageAuto>,
-    /// The item's align_self property, or the parent's align_items property is not set
-    pub align_self: AlignSelf,
-    /// The item's justify_self property, or the parent's justify_items property is not set
-    pub justify_self: AlignSelf,
+    /// The item's align_self property, or the parent's align_items property is not set; `None` is `normal`
+    pub align_self: Option<AlignSelf>,
+    /// The item's justify_self property, or the parent's justify_items property is not set; `None` is `normal`
+    pub justify_self: Option<AlignSelf>,
     /// The items first baseline (horizontal)
     pub baseline: Option<f32>,
     /// Shim for baseline alignment that acts like an extra top margin
@@ -98,8 +99,8 @@ impl GridItem {
     pub fn new_with_style_and_order<S: GridItemStyle>(
         node: NodeId,
         style: S,
-        parent_align_items: AlignItems,
-        parent_justify_items: AlignItems,
+        parent_align_items: Option<AlignItems>,
+        parent_justify_items: Option<AlignItems>,
         source_order: u16,
     ) -> Self {
         const UNPLACED: Line<OriginZeroLine> = Line { start: OriginZeroLine(0), end: OriginZeroLine(0) };
@@ -118,8 +119,8 @@ impl GridItem {
             padding: style.padding(),
             border: style.border(),
             margin: style.margin(),
-            align_self: style.align_self().unwrap_or(parent_align_items),
-            justify_self: style.justify_self().unwrap_or(parent_justify_items),
+            align_self: style.align_self().or(parent_align_items),
+            justify_self: style.justify_self().or(parent_justify_items),
             baseline: None,
             baseline_shim: 0.0,
             row_indexes: Line { start: 0, end: 0 }, // Properly initialised later
@@ -158,9 +159,18 @@ impl GridItem {
     /// See <https://www.w3.org/TR/css-align-3/#baseline-align-self>
     #[inline(always)]
     pub fn participates_in_baseline_alignment(&self) -> bool {
-        self.align_self.keyword == AlignItemsKeyword::Baseline
+        matches!(self.align_self, Some(align) if align.keyword == AlignItemsKeyword::Baseline)
             && !self.has_auto_block_margin()
             && !self.has_cyclic_block_size_dependency()
+    }
+
+    /// The item's self-alignment in `axis`, with `normal` resolved as for a grid item
+    pub fn self_alignment(&self, axis: AbsoluteAxis) -> AlignSelf {
+        let specified = match axis {
+            AbsoluteAxis::Horizontal => self.justify_self,
+            AbsoluteAxis::Vertical => self.align_self,
+        };
+        specified.unwrap_or_else(|| normal_self_alignment(self.is_compressible_replaced, self.aspect_ratio))
     }
 
     /// This item's placement in the specified axis in OriginZero coordinates
@@ -299,15 +309,30 @@ impl GridItem {
             if self.box_sizing == BoxSizing::ContentBox { padding_border_size } else { Size::ZERO };
         let resolved_size = self.size.maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis));
         let inherent_size = resolved_size.maybe_apply_aspect_ratio(aspect_ratio).maybe_add(box_sizing_adjustment);
-        let (min_size, max_size) = resolved_size.maybe_transfer_min_max_size(
-            aspect_ratio,
-            self.min_size.maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis)),
-            self.max_size.maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis)),
-        );
+        let grid_area_minus_item_margins_size = grid_area_size.maybe_sub(margins).maybe_max(Size::ZERO);
+
+        // An auto axis stretches to the area unless its margins are auto.
+        let stretched = Size {
+            width: (!self.margin.left.is_auto()
+                && !self.margin.right.is_auto()
+                && self.self_alignment(AbsoluteAxis::Horizontal) == AlignSelf::STRETCH)
+                .then_some(grid_area_minus_item_margins_size.width)
+                .flatten(),
+            height: (!self.margin.top.is_auto()
+                && !self.margin.bottom.is_auto()
+                && self.self_alignment(AbsoluteAxis::Vertical) == AlignSelf::STRETCH)
+                .then_some(grid_area_minus_item_margins_size.height)
+                .flatten(),
+        };
+        let specified = Size { width: self.justify_self.is_some(), height: self.align_self.is_some() };
+        let (min_size, max_size) = transfer_basis(resolved_size, stretched, specified, box_sizing_adjustment)
+            .maybe_transfer_min_max_size(
+                aspect_ratio,
+                self.min_size.maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis)),
+                self.max_size.maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis)),
+            );
         let (min_size, max_size) =
             (min_size.maybe_add(box_sizing_adjustment), max_size.maybe_add(box_sizing_adjustment));
-
-        let grid_area_minus_item_margins_size = grid_area_size.maybe_sub(margins).maybe_max(Size::ZERO);
 
         // If node is absolutely positioned and width is not set explicitly, then deduce it
         // from left, right and container_content_box if both are set.
@@ -322,15 +347,7 @@ impl GridItem {
                 };
             }
 
-            // Apply width based on stretch alignment if:
-            //  - Alignment style is "stretch"
-            //  - The node is not absolutely positioned
-            //  - The node does not have auto margins in this axis.
-            if !self.margin.left.is_auto() && !self.margin.right.is_auto() && self.justify_self == AlignSelf::STRETCH {
-                return grid_area_minus_item_margins_size.width;
-            }
-
-            None
+            stretched.width
         });
         // Reapply aspect ratio after stretch and absolute position width adjustments
         let Size { width, height } =
@@ -351,15 +368,7 @@ impl GridItem {
                 };
             }
 
-            // Apply height based on stretch alignment if:
-            //  - Alignment style is "stretch"
-            //  - The node is not absolutely positioned
-            //  - The node does not have auto margins in this axis.
-            if !self.margin.top.is_auto() && !self.margin.bottom.is_auto() && self.align_self == AlignSelf::STRETCH {
-                return grid_area_minus_item_margins_size.height;
-            }
-
-            None
+            stretched.height
         });
         // Reapply aspect ratio after stretch and absolute position height adjustments
         let Size { width, height } = Size { width, height }.maybe_apply_aspect_ratio(aspect_ratio);
