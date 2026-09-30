@@ -1095,12 +1095,8 @@ fn determine_flex_base_size(
 
         let padding_border_axes_sums = (child.padding + child.border).sum_axes().map(Some);
 
-        // Note that it is important that the `parent_size` parameter in the main axis is not set for this
-        // function call as it used for resolving percentages, and percentage size in an axis should not contribute
-        // to a min-content contribution in that same axis. However the `parent_size` and `available_space` *should*
-        // be set to their usual values in the cross axis so that wrapping content can wrap correctly.
-        //
-        // See https://drafts.csswg.org/css-sizing-3/#min-percentage-contribution
+        // The item's percentages resolve against the container's definite main size: only a cyclic percentage,
+        // one against an indefinite size, resolves specially (CSS Sizing 3 §5.2.1).
         let style_min_main_size =
             child.min_size.or(child.overflow.map(Overflow::maybe_into_automatic_min_size).into()).main(dir);
 
@@ -1112,7 +1108,7 @@ fn determine_flex_base_size(
                 tree.measure_child_size(
                     child.node,
                     child_known_dimensions,
-                    child_parent_size,
+                    child_parent_size.with_main(dir, percent_resolution_main_size),
                     child_available_space,
                     SizingMode::ContentSize,
                     dir.main_axis(),
