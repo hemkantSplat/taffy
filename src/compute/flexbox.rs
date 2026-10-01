@@ -1358,25 +1358,23 @@ fn determine_container_main_size(
     let dir = constants.dir;
     let main_content_box_inset = constants.content_box_inset.main_axis_sum(constants.dir);
 
+    // An item contributes its flex base size clamped by its own min and max main sizes (css-flexbox-1 9.9.1).
+    let item_main_length = |child: &FlexItem| child.hypothetical_outer_size.main(dir);
+    let longest_line_length = |lines: &[FlexLine<'_>], main_axis_gap: f32| -> f32 {
+        lines
+            .iter()
+            .map(|line| {
+                line.items.iter().map(item_main_length).sum::<f32>() + sum_axis_gaps(main_axis_gap, line.items.len())
+            })
+            .max_by(|a, b| a.total_cmp(b))
+            .unwrap_or(0.0)
+    };
+
     let outer_main_size: f32 = constants.node_outer_size.main(constants.dir).unwrap_or_else(|| {
         match available_space.main(dir) {
             AvailableSpace::Definite(main_axis_available_space) => {
                 let main_axis_gap = constants.gap.main(constants.dir);
-                let item_main_length = |child: &FlexItem| {
-                    let padding_border_sum = (child.padding + child.border).main_axis_sum(constants.dir);
-                    (child.flex_basis.maybe_max(child.min_size.main(constants.dir))
-                        + child.margin.main_axis_sum(constants.dir))
-                    .max(padding_border_sum)
-                };
-                let longest_line_length: f32 = lines
-                    .iter()
-                    .map(|line| {
-                        let line_main_axis_gap = sum_axis_gaps(main_axis_gap, line.items.len());
-                        let total_target_size = line.items.iter().map(item_main_length).sum::<f32>();
-                        total_target_size + line_main_axis_gap
-                    })
-                    .max_by(|a, b| a.total_cmp(b))
-                    .unwrap_or(0.0);
+                let longest_line_length = longest_line_length(lines, main_axis_gap);
                 let size = longest_line_length + main_content_box_inset;
 
                 // A balanced container can produce multiple lines that all fit within the
@@ -1414,37 +1412,20 @@ fn determine_container_main_size(
                     return f32_max(size, f32_min(max_content_size, main_axis_available_space));
                 }
 
-                if lines.len() > 1 {
-                    f32_max(size, main_axis_available_space)
-                } else if constants.is_row && size > main_axis_available_space + main_content_box_inset {
+                let overflows = lines.len() > 1 || size > main_axis_available_space + main_content_box_inset;
+                if constants.is_row && overflows {
                     // A row container's auto width is fit-content: max-content clamped to the space, floored by min-content.
                     let min_content_space = available_space.with_main(dir, AvailableSpace::MinContent);
                     let min_content_size = intrinsic_main_size(tree, min_content_space, lines, constants);
                     f32_max(main_axis_available_space + main_content_box_inset, min_content_size)
+                } else if lines.len() > 1 {
+                    f32_max(size, main_axis_available_space)
                 } else {
                     size
                 }
             }
             AvailableSpace::MinContent if constants.is_wrap => {
-                let longest_line_length: f32 = lines
-                    .iter()
-                    .map(|line| {
-                        let line_main_axis_gap = sum_axis_gaps(constants.gap.main(constants.dir), line.items.len());
-                        let total_target_size = line
-                            .items
-                            .iter()
-                            .map(|child| {
-                                let padding_border_sum = (child.padding + child.border).main_axis_sum(constants.dir);
-                                (child.flex_basis.maybe_max(child.min_size.main(constants.dir))
-                                    + child.margin.main_axis_sum(constants.dir))
-                                .max(padding_border_sum)
-                            })
-                            .sum::<f32>();
-                        total_target_size + line_main_axis_gap
-                    })
-                    .max_by(|a, b| a.total_cmp(b))
-                    .unwrap_or(0.0);
-                longest_line_length + main_content_box_inset
+                longest_line_length(lines, constants.gap.main(constants.dir)) + main_content_box_inset
             }
             AvailableSpace::MinContent | AvailableSpace::MaxContent => intrinsic_main_size(tree, available_space, lines, constants),
         }
