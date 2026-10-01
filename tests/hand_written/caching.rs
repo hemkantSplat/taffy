@@ -18,7 +18,8 @@ mod caching {
 
         taffy.compute_layout_with_measure(node, Size::MAX_CONTENT, test_measure_function).unwrap();
 
-        assert_eq!(taffy.get_node_context_mut(leaf).unwrap().count, 7);
+        // Laying out at the final inline size offers the leaf a definite width too; the count stays flat with depth.
+        assert_eq!(taffy.get_node_context_mut(leaf).unwrap().count, 9);
     }
 
     #[test]
@@ -35,7 +36,8 @@ mod caching {
         }
 
         taffy.compute_layout_with_measure(node, Size::MAX_CONTENT, test_measure_function).unwrap();
-        assert_eq!(taffy.get_node_context_mut(leaf).unwrap().count, 7);
+        // As above: one more measure per distinct width constraint, flat with depth.
+        assert_eq!(taffy.get_node_context_mut(leaf).unwrap().count, 9);
     }
 
     /// A node's size measured for one axis must not be returned from the cache when the other

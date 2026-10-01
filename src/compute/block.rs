@@ -267,6 +267,7 @@ impl BlockContext<'_> {
 }
 
 use super::common::alignment::{apply_alignment_fallback, compute_alignment_offset};
+use super::common::inline_size::compute_at_final_inline_size;
 #[cfg(feature = "content_size")]
 use super::common::scrollable_overflow::compute_scrollable_overflow_contribution;
 use super::common::sizing_keyword::{resolve_sizing_keyword, SizingKeywordResolution};
@@ -420,22 +421,15 @@ pub fn compute_block_layout(
 
     // Unwrap the block formatting context if one was passed, or else create a new one
     debug_log!("BLOCK");
+    let inputs = LayoutInput { known_dimensions: styled_based_known_dimensions, ..inputs };
     let mut output = match block_ctx {
-        Some(inherited_bfc) if !establishes_new_bfc => compute_inner(
-            tree,
-            node_id,
-            LayoutInput { known_dimensions: styled_based_known_dimensions, ..inputs },
-            inherited_bfc,
-        ),
+        Some(inherited_bfc) if !establishes_new_bfc => {
+            compute_at_final_inline_size(inputs, |inputs| compute_inner(tree, node_id, inputs, inherited_bfc))
+        }
         _ => {
             let mut root_bfc = BlockFormattingContext::new();
             let mut root_ctx = root_bfc.root_block_context();
-            compute_inner(
-                tree,
-                node_id,
-                LayoutInput { known_dimensions: styled_based_known_dimensions, ..inputs },
-                &mut root_ctx,
-            )
+            compute_at_final_inline_size(inputs, |inputs| compute_inner(tree, node_id, inputs, &mut root_ctx))
         }
     };
 

@@ -19,6 +19,7 @@ use crate::util::{MaybeResolve, ResolveOrZero};
 use crate::{BoxGenerationMode, BoxSizing, Dimension, Direction, RequestedAxis};
 
 use super::common::alignment::apply_alignment_fallback;
+use super::common::inline_size::compute_at_final_inline_size;
 #[cfg(feature = "content_size")]
 use super::common::scrollable_overflow::compute_scrollable_overflow_contribution;
 use super::common::sizing_keyword::{resolve_sizing_keyword, SizingKeywordResolution};
@@ -316,11 +317,9 @@ pub fn compute_flexbox_layout(
         .known_dimensions_are_definite
         .zip_map(known_dimensions, |is_definite, known_dimension| is_definite || known_dimension.is_none());
 
-    let mut output = compute_preliminary(
-        tree,
-        node,
-        LayoutInput { known_dimensions: styled_based_known_dimensions, known_dimensions_are_definite, ..inputs },
-    );
+    let inputs =
+        LayoutInput { known_dimensions: styled_based_known_dimensions, known_dimensions_are_definite, ..inputs };
+    let mut output = compute_at_final_inline_size(inputs, |inputs| compute_preliminary(tree, node, inputs));
 
     // Layout containment suppresses the box's baseline for baseline-alignment purposes
     if contain.suppresses_baseline() {
@@ -412,6 +411,11 @@ fn compute_preliminary(tree: &mut impl LayoutFlexboxContainer, node: NodeId, inp
             .maybe_resolve(inner_container_size, |val, basis| tree.calc(val, basis))
             .unwrap_or(0.0);
         constants.gap.set_main(constants.dir, new_gap);
+    }
+
+    // A row container's width is its main size, so a width-only request ends here.
+    if run_mode == RunMode::ComputeSize && inputs.axis == RequestedAxis::Horizontal && constants.is_row {
+        return LayoutOutput::from_outer_size(constants.container_size);
     }
 
     // 6. Resolve the flexible lengths of all the flex items to find their used main size.
